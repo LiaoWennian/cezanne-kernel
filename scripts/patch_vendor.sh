@@ -52,6 +52,38 @@ PATCHES = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# 符号版本 CRC 放行（由 RELAX_MODVERSIONS=1 控制）
+#
+# 为什么必须这么做：
+#   出厂内核的 config（我们从 IKCFG 提取）里出现了 MIHW / MIGT / MILLET /
+#   DEBUG_KINFO / MI_MEMORY_SYSFS / MTK_SOCINFO / UNIX_SCM /
+#   MITIGATE_SPECTRE_BRANCH_HISTORY 这些符号 —— 它们在 cezanne-r-oss 开源树里
+#   根本不存在。也就是说：小米出货内核 = 开源树 + 内部私有驱动 + CAF 回溯补丁，
+#   结构体布局与开源树不一致（DEBUG_KINFO 会往 struct task_struct 加字段）。
+#   实测：module_layout 的 CRC 原厂 0x5c148880，本树编出来 0x6876a8fb，
+#   533 个可比对符号里 246 个对不上 —— 靠调配置永远调不齐。
+#
+#   不放开这一关，10 个原厂 vendor .ko（wlan/gps/触摸/指纹/充电…）会全部
+#   报 "disagrees about version of symbol xxx" 拒绝加载，手机等于砖。
+#   放开之后：模块能加载，但结构体布局差异带来的 ABI 风险只能靠上机实测。
+# ---------------------------------------------------------------------------
+if os.environ.get("RELAX_MODVERSIONS", "0") == "1":
+    PATCHES.append((
+        "kernel/module.c",
+        "\t/* Exporting module didn't supply crcs?  OK, we're already tainted. */\n"
+        "\tif (!crc)\n\t\treturn 1;\n",
+        "\t/* Exporting module didn't supply crcs?  OK, we're already tainted. */\n"
+        "\tif (!crc)\n\t\treturn 1;\n"
+        "\n"
+        "\t/* cezanne-port: 开源树与出厂树的结构体布局不同，符号 CRC 无法对齐，\n"
+        "\t * 这里放行全部版本校验，否则原厂 vendor .ko 全部拒载。\n"
+        "\t * 只影响符号版本检查，vermagic 校验（check_modstruct_version 之外的\n"
+        "\t * same_magic）仍然生效。*/\n"
+        "\treturn 1;\n",
+        "放行符号版本 CRC 校验（原厂 .ko 与开源树 CRC 必然不一致）",
+    ))
+
 changed = 0
 for rel, old, new, why in PATCHES:
     p = os.path.join(root, rel)
