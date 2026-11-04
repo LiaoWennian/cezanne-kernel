@@ -38,6 +38,18 @@ PATCHES = [
         "obj-$(CONFIG_VIDEO_MEDIATEK_VCU) += mtk-vcu.o",
         "mtk_vcodec_mem.o 已在 mtk-vcu-y 里，不要再单独进 obj-y（LTO 下 duplicate symbol）",
     ),
+    (
+        # 原厂 config 关掉 GenieZone 后，KREE 仍被其他选项 select 住，
+        # 而 trusted_mem/mtee_impl 只在 CONFIG_MTK_GZ_KREE=y 时编译。
+        # mtee_ops.c 依赖 gz_kree.h 的 KREE_* API，该头文件真正的声明
+        # 在小米私有 MTEE 树里，OSS 树只有一半 → 一堆 undeclared identifier。
+        # 这里的做法是把这个 ifeq 改成一个永不成立的名字，
+        # 只跳过 mtee_impl 三个文件，不动 KREE 相关的其他逻辑。
+        "drivers/misc/mediatek/trusted_mem/Makefile",
+        "ifeq ($(CONFIG_MTK_GZ_KREE),y)\nobj-y += mtee_impl.o",
+        "ifeq ($(CONFIG_MTK_GZ_KREE_OSS_DISABLED),y)\nobj-y += mtee_impl.o",
+        "跳过 trusted_mem/mtee_impl（依赖闭源 MTEE 的 KREE_* 头文件）",
+    ),
 ]
 
 changed = 0
