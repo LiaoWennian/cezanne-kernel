@@ -1,0 +1,142 @@
+name: Build cezanne kernel (EROFS for HyperOS 4)
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_erofs:
+        description: "移植 EROFS 驱动（澎湃 OS4 系统层必需，勿关）"
+        type: boolean
+        default: true
+      enable_ksu:
+        description: "集成 KernelSU（首次验证开机建议 false）"
+        type: boolean
+        default: false
+      localversion:
+        description: "内核版本后缀。保持默认才能让原厂 vendor .ko 直接加载"
+        required: false
+        default: "-perf-00252-g2f26b5917fd6"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    env:
+      ENABLE_EROFS: ${{ inputs.enable_erofs && '1' || '0' }}
+      ENABLE_KSU: ${{ inputs.enable_ksu && '1' || '0' }}
+      LOCALVERSION: ${{ inputs.localversion }}
+
+    steps:
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+
+      - name: 清理磁盘并增加 swap
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/local/lib/node_modules /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile
+          sudo mkswap /swapfile && sudo swapon /swapfile
+          df -h / && free -g
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential cpio flex git kmod libelf-dev libssl-dev \
+            lz4 lzop python3 rsync unzip xz-utils zip
+          # clang-r383902 是 2020 年的 prebuilt，依赖 libtinfo5/libncurses5
+          if ! sudo apt-get install -y --no-install-recommends libtinfo5 libncurses5; then
+            echo "libtinfo5 不可用，改用 libtinfo6 + 兼容软链"
+            sudo apt-get install -y --no-install-recommends libtinfo6 libncurses6 || true
+            sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
+          fi
+
+      - name: 下载工具链（clang-r383902 + GCC 4.9，与官方 build.config.mtk.aarch64 一致）
+        run: |
+          set -e
+          mkdir -p toolchain/clang toolchain/gcc64
+          curl -fsSL --retry 5 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r48/clang-r383902.tar.gz" \
+            | tar -xz -C toolchain/clang
+          curl -fsSL --retry 5 "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-11.0.0_r48.tar.gz" \
+            | tar -xz -C toolchain/gcc64
+          toolchain/clang/bin/clang --version
+          toolchain/gcc64/bin/aarch64-linux-android-gcc --version | head -n1
+
+      - name: 克隆小米官方内核源码（cezanne-r-oss, 4.14.186）
+        run: |
+          set -e
+          git clone --depth=1 -b cezanne-r-oss \
+            https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git kernel
+          # 去掉 .git，避免 LOCALVERSION_AUTO 把 -g<sha> 拼进版本号
+          rm -rf kernel/.git
+          du -sh kernel
+
+      - name: 移植 EROFS 驱动
+        if: env.ENABLE_EROFS == '1'
+        run: sh scripts/fetch_erofs.sh
+
+      - name: 克隆 KernelSU v0.9.5（最后支持非 GKI 的版本）
+        if: env.ENABLE_KSU == '1'
+        run: |
+          set -e
+          git clone --filter=blob:none https://github.com/tiann/KernelSU.git KernelSU
+          git -C KernelSU checkout v0.9.5
+          echo "commit count: $(git -C KernelSU rev-list --count HEAD)"
+
+      - name: 编译内核
+        run: sh scripts/build.sh
+
+      - name: 打包 AnyKernel3 卡刷包
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+          rm -rf ak3/.git
+          cp anykernel/anykernel.sh ak3/anykernel.sh
+
+          B=out/arch/arm64/boot
+          TAG="cezanne-erofs$( [ "$ENABLE_KSU" = "1" ] && echo "-ksu" )"
+
+          if [ -f "$B/Image.gz-dtb" ]; then
+            rm -f ak3/Image ak3/zImage ak3/Image.gz ak3/Image.gz-dtb
+            cp anykernel/anykernel.sh ak3/anykernel.sh
+            cp "$B/Image.gz-dtb" ak3/Image.gz-dtb
+            ( cd ak3 && zip -r9 "../$TAG-dtb-anykernel3.zip" . -x '*.git*' )
+          fi
+
+          rm -f ak3/Image ak3/zImage ak3/Image.gz ak3/Image.gz-dtb
+          cp anykernel/anykernel.sh ak3/anykernel.sh
+          cp "$B/Image.gz" ak3/Image.gz
+          ( cd ak3 && zip -r9 "../$TAG-gz-anykernel3.zip" . -x '*.git*' )
+
+          ls -lh ./*anykernel3.zip
+
+      - name: 收集产物
+        run: |
+          set -e
+          mkdir -p dist
+          cp out/arch/arm64/boot/Image.gz dist/
+          [ -f out/arch/arm64/boot/Image.gz-dtb ] && cp out/arch/arm64/boot/Image.gz-dtb dist/ || true
+          [ -f out/arch/arm64/boot/Image ] && cp out/arch/arm64/boot/Image dist/ || true
+          cp out/.config dist/config.txt
+          cp out/System.map dist/System.map || true
+          cp ./*anykernel3.zip dist/ || true
+          cat out/include/config/kernel.release > dist/kernel-release.txt
+          {
+            echo "编译时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "内核 release: $(cat dist/kernel-release.txt)"
+            echo "EROFS: $ENABLE_EROFS   KernelSU: $ENABLE_KSU"
+            echo "EROFS 生效: $(grep -c '^CONFIG_EROFS_FS=y' dist/config.txt)"
+          } > dist/BUILD-INFO.txt
+          ls -lh dist
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: cezanne-kernel-erofs
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
