@@ -1,0 +1,18 @@
+# ============================================================
+# 降级片段 —— 关掉"原厂 config 开了、但 OSS 源码树里没实现"的私有功能
+#
+# 背景：
+#   我们用 configs/base.config（从原厂 MIUI14 内核 IKCFG 提取的完整配置）
+#   来编内核，这样才能让 module_layout 等符号 CRC 与原厂 vendor .ko 完全一致。
+#   但原厂 config 会打开一堆只在小米/MTK 内部源码树里才有的私有驱动，
+#   这些代码没有随 cezanne-r-oss 一起开源，编译时直接 fatal error。
+#
+# 处理原则：
+#   只关掉"研发/调试/性能建模"这类对开机和日常使用零影响的功能，
+#   绝不动任何会改变 struct module 布局或核心子系统的开关
+#   （SMP / PREEMPT / MODULE_UNLOAD / MODVERSIONS / KALLSYMS / LTO / CFI）。
+# ============================================================
+
+# GPU 功耗建模（swpm_v1/mtk_swpm.c 里 #include <mtk_gpu_power_sspm_ipi.h>，
+# 该头文件由私有 GPU 驱动提供，OSS 树中没有）。纯调试统计用途，关掉无影响。
+CONFIG_MTK_GPU_SWPM_SUPPORT=n
