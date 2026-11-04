@@ -162,11 +162,15 @@ jobs:
             echo "编译时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "内核 release: $(cat dist/kernel-release.txt)"
             echo "EROFS: $ENABLE_EROFS   KernelSU: $ENABLE_KSU"
+            echo "基础 config: $(wc -l < configs/base.config) 行（原厂 IKCFG 提取，非 defconfig）"
             echo "EROFS 生效: $(grep -c '^CONFIG_EROFS_FS=y' dist/config.txt)"
             echo "MODVERSIONS: $(grep -c '^CONFIG_MODVERSIONS=y' dist/config.txt)"
             echo -n "module_layout CRC: "
             grep -m1 'module_layout' out/Module.symvers || echo "缺失（异常，模块会加载失败）"
             echo "导出符号总数: $(wc -l < out/Module.symvers)"
+            echo -n "与原厂 .ko 符号一致性: "
+            awk -F'\t' 'NR==FNR{want[$2]=$1;next}{ if($2 in want){t++; if(want[$2]==$1)o++} } END { printf "%d/%d 一致\n", o+0, t+0 }' \
+              configs/vendor_versions.txt out/Module.symvers
           } > dist/BUILD-INFO.txt
           ls -lh dist
 
