@@ -209,6 +209,25 @@ verify_vermagic() {
 integrate_kernelsu
 apply_config
 verify_config
+
+# ---------------------------------------------------------------------------
+# 2.5 预检模式：只编 fs/erofs，用 -k 把所有错误一次性抖出来
+#     （移植第三方驱动的调试期用这个，一轮就能看全，不用逐轮试错）
+# ---------------------------------------------------------------------------
+if [ "${PRECHECK:-0}" = "1" ]; then
+	log "预检：单编 fs/erofs（-k 收集全部错误）"
+	make -C "$KERNEL_DIR" $MAKE_VARS prepare >/dev/null 2>&1 || true
+	set +e
+	out=$(make -C "$KERNEL_DIR" $MAKE_VARS -k -j"$JOBS" fs/erofs/ 2>&1)
+	set -e
+	printf '%s\n' "$out" | grep -E "error:|fatal error|Error [0-9]" | head -80
+	if printf '%s\n' "$out" | grep -qE "error:|Error [0-9]"; then
+		die "fs/erofs 预检失败（以上是全部错误）"
+	fi
+	log "fs/erofs 预检通过"
+	exit 0
+fi
+
 build
 
 log "全部完成"
