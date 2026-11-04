@@ -11,7 +11,7 @@
 #   CLANG_DIR     clang-r383902       默认 ./toolchain/clang
 #   CROSS_COMPILE 交叉工具前缀        默认 aarch64-linux-gnu-（apt 提供）
 #   KSU_DIR       KernelSU 源码目录   默认 ./KernelSU
-#   LOCALVERSION  版本后缀（含前导 -） 默认 -perf-00252-g2f26b5917fd6
+#   KERNEL_LOCALVERSION  版本后缀（含前导 -） 默认 -perf-00252-g2f26b5917fd6
 #   ENABLE_EROFS  是否已移植 erofs    默认 1
 #   ENABLE_KSU    是否集成 KernelSU   默认 0
 #   JOBS          并行度              默认 nproc
@@ -31,7 +31,13 @@ CLANG_DIR=${CLANG_DIR:-$HERE/toolchain/clang}
 # 交叉工具前缀：由 apt 的 binutils-aarch64-linux-gnu / gcc-aarch64-linux-gnu 提供。
 # 代码本身全部用 clang 编译（CC=clang），这里的前缀只用于兜底调用 as/ld/objcopy。
 CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
-LOCALVERSION=${LOCALVERSION:--perf-00252-g2f26b5917fd6}
+# 注意：这里刻意不叫 LOCALVERSION。scripts/setlocalversion 里有一行
+#   res="${res}${CONFIG_LOCALVERSION}${LOCALVERSION}"
+# 会把 CONFIG_LOCALVERSION 和 make 变量 LOCALVERSION 各追加一次。
+# 如果环境里存在同名变量 LOCALVERSION，make 会继承它，导致后缀重复两遍。
+KERNEL_LOCALVERSION=${KERNEL_LOCALVERSION:-${LOCALVERSION:--perf-00252-g2f26b5917fd6}}
+unset LOCALVERSION
+EXPECTED_RELEASE=${EXPECTED_RELEASE:-4.14.186${KERNEL_LOCALVERSION}}
 ENABLE_EROFS=${ENABLE_EROFS:-1}
 ENABLE_KSU=${ENABLE_KSU:-0}
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
@@ -51,12 +57,12 @@ command -v "${CROSS_COMPILE}as" >/dev/null 2>&1 || \
 export PATH="$CLANG_DIR/bin:$PATH"
 
 # 与官方 build.config.mtk.aarch64 保持一致：clang + lld，binutils 全部用 llvm 版
-MAKE_VARS="ARCH=arm64 O=$OUT CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$CROSS_COMPILE LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf AR=llvm-ar STRIP=llvm-strip"
+MAKE_VARS="ARCH=arm64 O=$OUT LOCALVERSION= CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$CROSS_COMPILE LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf AR=llvm-ar STRIP=llvm-strip"
 
 log "内核版本: $(sed -n 's/^\(VERSION\|PATCHLEVEL\|SUBLEVEL\) *= *//p' "$KERNEL_DIR/Makefile" | paste -sd. -)"
 log "clang   : $("$CLANG_DIR/bin/clang" --version | head -n1)"
 log "交叉工具: $("${CROSS_COMPILE}as" --version | head -n1)"
-log "EROFS=$ENABLE_EROFS  KSU=$ENABLE_KSU  LOCALVERSION='$LOCALVERSION'  JOBS=$JOBS"
+log "EROFS=$ENABLE_EROFS  KSU=$ENABLE_KSU  后缀='$KERNEL_LOCALVERSION'  JOBS=$JOBS"
 
 # ---------------------------------------------------------------------------
 # 1. 集成 KernelSU（可选）
@@ -119,7 +125,7 @@ apply_config() {
 	# 走 scripts/config --set-str 会被当成命令行选项解析，导致写入错误。
 	sed -i.bak -e 's/^CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/' "$cfg"
 	sed -i -e '/^CONFIG_LOCALVERSION=/d' "$cfg"
-	printf 'CONFIG_LOCALVERSION="%s"\n' "$LOCALVERSION" >> "$cfg"
+	printf 'CONFIG_LOCALVERSION="%s"\n' "$KERNEL_LOCALVERSION" >> "$cfg"
 	grep -q '^# CONFIG_LOCALVERSION_AUTO is not set' "$cfg" || echo 'CONFIG_LOCALVERSION_AUTO=n' >> "$cfg"
 	rm -f "$cfg.bak"
 
@@ -192,7 +198,16 @@ verify_vermagic() {
 	rel=$(cat "$OUT/include/config/kernel.release" 2>/dev/null || echo "")
 	[ -n "$rel" ] || { warn "读不到 kernel.release，跳过"; return 0; }
 
-	expect="$rel SMP preempt mod_unload modversions aarch64"
+	# 硬校验：release 必须逐字符等于预期值。
+	# 不能拿"编出来的 release"去比对"编出来的镜像"——那样自己跟自己对得上，
+	# 后缀重复两遍也能通过（真实踩过这个坑：setlocalversion 会同时追加
+	# CONFIG_LOCALVERSION 和 make 变量 LOCALVERSION）。
+	if [ "$rel" != "$EXPECTED_RELEASE" ]; then
+		warn "kernel.release 不符：实际 '$rel'，预期 '$EXPECTED_RELEASE'"
+		die "版本后缀不对，原厂 vendor .ko 的 vermagic 会对不上"
+	fi
+
+	expect="$EXPECTED_RELEASE SMP preempt mod_unload modversions aarch64"
 	log "校验 vermagic: $expect"
 
 	if grep -aqF "$expect" "$img"; then
@@ -202,7 +217,7 @@ verify_vermagic() {
 		grep -ao "[0-9]\+\.[0-9]\+\.[0-9]\+[^\"']\{0,60\} SMP [a-z_ ]\{0,60\}" "$img" \
 			| sort -u | head -5 || true
 		echo "-----------------------------------"
-		die "vermagic 不匹配，原厂 vendor .ko 会加载失败；请检查 LOCALVERSION / MODVERSIONS / PREEMPT"
+		die "vermagic 不匹配，原厂 vendor .ko 会加载失败；请检查后缀 / MODVERSIONS / PREEMPT"
 	fi
 }
 
