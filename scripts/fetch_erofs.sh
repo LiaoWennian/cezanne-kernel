@@ -75,6 +75,15 @@ cat > "$KERNEL_DIR/fs/erofs/erofs_compat.h" <<'COMPAT'
 #include <linux/compiler.h>
 #include <asm/processor.h>
 
+/*
+ * EROFS_SUPER_MAGIC_V1 在主线里定义于 include/uapi/linux/magic.h，
+ * 但 cezanne 官方 4.14.186 树的 magic.h 里还没有（EROFS 是 4.19 才进主线的）。
+ * 数值取自主线 uapi/linux/magic.h，与 OS4 镜像里的 superblock magic 一致。
+ */
+#ifndef EROFS_SUPER_MAGIC_V1
+#define EROFS_SUPER_MAGIC_V1	0xE0F5E1E2
+#endif
+
 static inline int erofs_compat_cond_read_relaxed(atomic_t *v, int locked)
 {
 	int val;
