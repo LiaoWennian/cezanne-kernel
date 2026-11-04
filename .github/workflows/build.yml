@@ -47,7 +47,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential cpio flex git kmod libelf-dev libssl-dev \
-            lz4 lzop python3 rsync unzip xz-utils zip
+            lz4 lzop python3 rsync unzip xz-utils zip \
+            binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
+          # 交叉工具自检：缺任何一个都直接失败，不要留到编译阶段才发现
+          aarch64-linux-gnu-as --version | head -n1
+          aarch64-linux-gnu-ld --version | head -n1
+          aarch64-linux-gnu-gcc --version | head -n1
           # clang-r383902 是 2020 年的 prebuilt，依赖 libtinfo5/libncurses5
           if ! sudo apt-get install -y --no-install-recommends libtinfo5 libncurses5; then
             echo "libtinfo5 不可用，改用 libtinfo6 + 兼容软链"
@@ -55,16 +60,19 @@ jobs:
             sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
           fi
 
-      - name: 下载工具链（clang-r383902 + GCC 4.9，与官方 build.config.mtk.aarch64 一致）
+      - name: 下载 clang-r383902（与官方 build.config.mtk.aarch64 一致）
         run: |
-          set -e
-          mkdir -p toolchain/clang toolchain/gcc64
-          curl -fsSL --retry 5 "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r48/clang-r383902.tar.gz" \
-            | tar -xz -C toolchain/clang
-          curl -fsSL --retry 5 "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/android-11.0.0_r48.tar.gz" \
-            | tar -xz -C toolchain/gcc64
-          toolchain/clang/bin/clang --version
-          toolchain/gcc64/bin/aarch64-linux-android-gcc --version | head -n1
+          set -euo pipefail
+          mkdir -p toolchain/clang
+          curl -fsSL --retry 5 --retry-delay 5 \
+            -o /tmp/clang-r383902.tar.gz \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-11.0.0_r48/clang-r383902.tar.gz"
+          ls -lh /tmp/clang-r383902.tar.gz
+          tar -xzf /tmp/clang-r383902.tar.gz -C toolchain/clang
+          test -x toolchain/clang/bin/clang || { echo "clang 解包不完整"; exit 1; }
+          test -x toolchain/clang/bin/ld.lld || { echo "ld.lld 缺失，LTO/CFI 会失败"; exit 1; }
+          toolchain/clang/bin/clang --version | head -n1
+          toolchain/clang/bin/ld.lld --version
 
       - name: 克隆小米官方内核源码（cezanne-r-oss, 4.14.186）
         run: |
