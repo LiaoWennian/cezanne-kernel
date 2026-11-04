@@ -1,0 +1,31 @@
+# ============================================================
+# EROFS 配置片段 —— cezanne (Redmi K30 Ultra) 4.14.186
+#
+# 为什么需要：
+#   澎湃 OS4（warhol OS4.0.3.0）的 system / product / system_ext
+#   全部是 erofs 格式。内核没有 fs/erofs 时，init 挂载 /system
+#   直接失败，必然卡开机。
+#
+# 关于 EROFS_FS_ZIP：
+#   实测 OS4 所有 erofs 分区 feature_incompat = 0x00（未压缩），
+#   理论上不需要解压支持。但原厂 config 本来就开着
+#   CONFIG_LZ4_DECOMPRESS=y，所以保留 ZIP 不会带来任何额外
+#   依赖或符号 CRC 变化，反而多一层保险（万一以后用压缩包）。
+# ============================================================
+
+# --- 核心：EROFS 只读文件系统 ---
+CONFIG_EROFS_FS=y
+
+# --- Android 强依赖 xattr（security.selinux 等）---
+CONFIG_EROFS_FS_XATTR=y
+
+# --- 解压支持：保留默认开启，零代价 ---
+CONFIG_EROFS_FS_ZIP=y
+
+# --- 排错期可临时打开，正式包关掉 ---
+# CONFIG_EROFS_FS_DEBUG=y
+
+# --- erofs 依赖的基础设施（官方 config 已开，这里显式声明防被裁）---
+CONFIG_BLOCK=y
+CONFIG_LIBCRC32C=y
+CONFIG_LZ4_DECOMPRESS=y
