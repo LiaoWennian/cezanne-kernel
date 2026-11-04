@@ -27,7 +27,10 @@ jobs:
     env:
       ENABLE_EROFS: ${{ inputs.enable_erofs && '1' || '0' }}
       ENABLE_KSU: ${{ inputs.enable_ksu && '1' || '0' }}
-      LOCALVERSION: ${{ inputs.localversion }}
+      # 变量名不能叫 LOCALVERSION：内核 scripts/setlocalversion 会把
+      # make 变量 LOCALVERSION 和 CONFIG_LOCALVERSION 各追加一次，
+      # 用同名环境变量会让版本后缀重复两遍。
+      KERNEL_LOCALVERSION: ${{ inputs.localversion }}
 
     steps:
       - name: 检出本仓库
@@ -108,12 +111,27 @@ jobs:
       - name: 打包 AnyKernel3 卡刷包
         run: |
           set -e
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
-          rm -rf ak3/.git
-          cp anykernel/anykernel.sh ak3/anykernel.sh
+
+          # AnyKernel3 从网络取，git 偶发失败时退回 codeload tarball
+          for i in 1 2 3; do
+            rm -rf ak3
+            if git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 2>/dev/null; then
+              echo "git clone 成功（第 $i 次）"
+              break
+            fi
+            echo "git clone 第 $i 次失败，改用 tarball"
+            if curl -fsSL --retry 3 -o ak3.tar.gz \
+                 "https://codeload.github.com/osm0sis/AnyKernel3/tar.gz/refs/heads/master"; then
+              mkdir -p ak3 && tar -xzf ak3.tar.gz -C ak3 --strip-components=1 && break
+            fi
+            sleep 5
+          done
+          test -f ak3/tools/ak3-core.sh || { echo "AnyKernel3 获取失败"; exit 1; }
+          rm -rf ak3/.git ak3.tar.gz
 
           B=out/arch/arm64/boot
-          TAG="cezanne-erofs$( [ "$ENABLE_KSU" = "1" ] && echo "-ksu" )"
+          TAG="cezanne-erofs"
+          if [ "$ENABLE_KSU" = "1" ]; then TAG="$TAG-ksu"; fi
 
           if [ -f "$B/Image.gz-dtb" ]; then
             rm -f ak3/Image ak3/zImage ak3/Image.gz ak3/Image.gz-dtb
