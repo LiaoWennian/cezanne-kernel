@@ -57,3 +57,14 @@ CONFIG_TEE=n
 # 而 GenieZone 已关掉，头文件与实现都不在，必须一并关掉。
 CONFIG_MTK_PROT_MEM_SUPPORT=n
 CONFIG_MTK_MTEE_MULTI_CHUNK_SUPPORT=n
+
+# ---------- 3. 版本号指向"开源树里真实存在的代码"----------
+# 原厂 config 里这两个版本号决定编哪一份源码：
+#   CONFIG_MICROTRUST_TEE_VERSION="400"  → drivers/misc/mediatek/teei/400/
+#   CONFIG_MTK_GPU_VERSION="mali valhall r32p1"
+#                                         → .../mali_valhall/mali-r32p1/
+# 但 cezanne-r-oss 只发布了 teei/300 与 mali-r19p0/r21p0/r25p0，
+# 原样保留会直接 "No rule to make target ... Makefile"。
+# 这两个都是字符串选项，不改变任何结构体布局或符号 CRC。
+CONFIG_MICROTRUST_TEE_VERSION="300"
+CONFIG_MTK_GPU_VERSION="mali valhall r25p0"
