@@ -8,11 +8,44 @@
 #   这些代码没有随 cezanne-r-oss 一起开源，编译时直接 fatal error。
 #
 # 处理原则：
-#   只关掉"研发/调试/性能建模"这类对开机和日常使用零影响的功能，
-#   绝不动任何会改变 struct module 布局或核心子系统的开关
+#   只关掉"研发/调试/性能建模"和"安全世界扩展"这类对开机和日常使用零影响
+#   的功能，绝不动任何会改变 struct module 布局或核心子系统的开关
 #   （SMP / PREEMPT / MODULE_UNLOAD / MODVERSIONS / KALLSYMS / LTO / CFI）。
 # ============================================================
 
-# GPU 功耗建模（swpm_v1/mtk_swpm.c 里 #include <mtk_gpu_power_sspm_ipi.h>，
-# 该头文件由私有 GPU 驱动提供，OSS 树中没有）。纯调试统计用途，关掉无影响。
+# ---------- 1. GPU 功耗建模 ----------
+# drivers/misc/mediatek/base/power/swpm_v1/mtk_swpm.c 里
+#   #include <mtk_gpu_power_sspm_ipi.h>
+# 该头文件由私有 GPU 驱动提供，OSS 树中没有。纯调试统计用途。
 CONFIG_MTK_GPU_SWPM_SUPPORT=n
+
+# ---------- 2. 安全世界（MTEE / GenieZone）----------
+# 这一整条链路都依赖 <tee_client_api.h>——OP-TEE client 接口，
+# 属于 external/optee_client，不随内核源码发布。缺它的文件有：
+#   drivers/misc/mediatek/geniezone/mtee-kree/tz_system.c
+#   drivers/misc/mediatek/trusted_mem/tee_impl/tee_ops.c
+#   drivers/misc/mediatek/pseudo_m4u/pseudo_m4u_sec.c
+#   drivers/misc/mediatek/cmdq/mailbox/cmdq-sec-gp.c
+#
+# 注意：只关"安全世界扩展"，不动 TEE 主驱动本身。
+#   MICROTRUST_TZ_DRIVER / VFS / KEYMASTER 保持开启 ——
+#   指纹、FBE 解密、keymaster 全靠它，关了就开不了机。
+#   真正的 OP-TEE 后端（CONFIG_OPTEE）原厂本来就是关的。
+
+# GenieZone：MTK 的 Trusty 方案，cezanne 走的是 microtrust，用不到。
+# Kconfig 里 MTK_ENABLE_GENIEZONE 会 select MTK_GZ_KREE，所以必须直接关它。
+CONFIG_MTK_ENABLE_GENIEZONE=n
+
+# 安全内存子系统：tee_impl/tee_ops.o 依赖 tee_client_api.h。
+# 影响的是 Widevine L1 安全播放、安全相机这类功能，不影响开机。
+CONFIG_MTK_SECURE_MEM_SUPPORT=n
+
+# 安全视频通路 / 安全相机：这两个任一为 y 都会编进
+# pseudo_m4u_sec.o 与 cmdq-sec-gp.o（见各自 Makefile）。
+# 必须保留 CONFIG_MTK_PSEUDO_M4U=y —— 它是这颗 SoC 的 IOMMU 本体，
+# 关了显示和相机全废。
+CONFIG_MTK_SEC_VIDEO_PATH_SUPPORT=n
+CONFIG_MTK_CAM_SECURITY_SUPPORT=n
+
+# 通用 TEE 总线框架（原厂开着，但 OSS 树里没有配套 client 头）
+CONFIG_TEE=n
