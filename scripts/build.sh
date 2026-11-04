@@ -280,11 +280,14 @@ build() {
 	# 没有实现的私有驱动，逐个试错每轮 15 分钟太贵，一轮把错全抖出来。
 	if ! make -C "$KERNEL_DIR" $MAKE_VARS -k -j"$JOBS" Image.gz > "$blog" 2>&1; then
 		echo "---------- 去重后的编译错误 ----------"
-		grep -E "fatal error:|error:" "$blog" \
+		grep -E "fatal error:|error:|No rule to make target|undefined reference|multiple definition" "$blog" \
 			| grep -v "LLVM ERROR" \
 			| sed -e 's#^.*/kernel/##' \
 			| sort -u | head -60
-		echo "-------------------------------------"
+		echo "---------- 失败的 make 目标 ----------"
+		grep -E "\*\*\*" "$blog" | grep -v "not remade" | sed -e 's#^.*/kernel/##' | head -20
+		echo "---------- 目标失败前 3 行 ----------"
+		grep -B3 -E "\*\*\* \[.*Error 1" "$blog" | sed -e 's#^.*/kernel/##' | head -40
 		echo "---------- 末尾上下文 ----------"
 		tail -25 "$blog"
 		die "编译失败（完整日志: $blog）"
