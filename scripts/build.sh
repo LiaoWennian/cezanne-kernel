@@ -244,20 +244,30 @@ verify_symbols() {
 	[ -f "$ref" ] || { warn "找不到 $ref，跳过 CRC 校验"; return 0; }
 
 	log "校验符号 CRC（对照原厂 vendor .ko）"
-	awk -F'\t' '
+	report="$OUT/crc-compare.txt"
+	awk -F'\t' -v rep="$report" '
 		NR==FNR { want[$2]=$1; next }
 		{ crc=$1; nm=$2
 		  if (nm in want) {
 			  seen++
-			  if (want[nm]==crc) ok++
-			  else { bad++; if (bad<=15) printf "  CRC 不一致: %-38s 原厂=%s 本次=%s\n", nm, want[nm], crc }
+			  if (want[nm]==crc) { ok++; print "OK\t" nm "\t" want[nm] "\t" crc > rep }
+			  else { bad++; print "MISMATCH\t" nm "\t" want[nm] "\t" crc > rep
+			         if (bad<=15) printf "  CRC 不一致: %-38s 原厂=%s 本次=%s\n", nm, want[nm], crc }
 		  }
 		}
 		END {
 			printf "可比对符号: %d，一致: %d，不一致: %d\n", seen, ok, bad+0
 			exit (bad>0)
 		}
-	' "$ref" "$symvers" || die "符号 CRC 与原厂不一致，原厂 vendor .ko 会拒载"
+	' "$ref" "$symvers" || true
+
+	# 把不一致数量落盘，由 workflow 的独立门禁步骤决定成败。
+	# 这样即使 CRC 不齐也照样出包，方便先上机验证 / 分析。
+	bad=$(grep -c '^MISMATCH' "$report" 2>/dev/null || echo 0)
+	printf '%s' "$bad" > "$OUT/crc-mismatch-count"
+	if [ "$bad" -gt 0 ]; then
+		warn "有 $bad 个符号 CRC 与原厂不一致（明细: $report）"
+	fi
 
 	# module_layout 单独强调：它是所有 .ko 都会引用的第一道门槛
 	ml=$(awk -F'\t' '$2=="module_layout" {print $1; exit}' "$symvers")
@@ -265,7 +275,7 @@ verify_symbols() {
 		log "✅ module_layout CRC = 0x5c148880（与原厂一致）"
 	else
 		warn "module_layout CRC = ${ml:-缺失}，原厂为 0x5c148880"
-		die "module_layout CRC 不一致，vendor .ko 会全部加载失败"
+		printf '%s' "$ml" > "$OUT/module-layout-crc"
 	fi
 }
 
