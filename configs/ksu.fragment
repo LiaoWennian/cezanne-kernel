@@ -1,0 +1,23 @@
+# ============================================================
+# KernelSU 配置片段 —— cezanne 4.14.186（非 GKI，走 legacy 模式）
+#
+# 仅在 workflow 里勾选 enable_ksu=true 时才会被应用。
+# 首次开荒（验证能不能开机）建议先关掉，减少变量。
+#
+# 原理：4.14 没有 GKI，KernelSU 只能用 kprobe hook 接管
+#       syscall；因此必须开 KPROBES + KALLSYMS_ALL。
+# ============================================================
+
+CONFIG_KSU=y
+CONFIG_KPROBES=y
+CONFIG_KALLSYMS=y
+CONFIG_KALLSYMS_ALL=y
+
+# --- 一些管理器/模块依赖的能力 ---
+CONFIG_MODULES=y
+CONFIG_MODULE_UNLOAD=y
+CONFIG_OVERLAY_FS=y
+CONFIG_TMPFS_XATTR=y
+
+# --- 关闭调试信息，显著缩短云端编译时间 ---
+# CONFIG_DEBUG_INFO is not set
