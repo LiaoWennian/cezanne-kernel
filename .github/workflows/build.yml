@@ -15,6 +15,10 @@ on:
         description: "内核版本后缀。保持默认才能让原厂 vendor .ko 直接加载"
         required: false
         default: "-perf-00252-g2f26b5917fd6"
+      diag_only:
+        description: "只做配置诊断（生成 .config 并列出与原厂差异），不编译"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -105,10 +109,16 @@ jobs:
         if: env.ENABLE_EROFS == '1'
         run: PRECHECK=1 sh scripts/build.sh
 
+      - name: 配置诊断（只生成 .config 并列出与原厂的全部差异）
+        if: inputs.diag_only
+        run: DIAG_ONLY=1 sh scripts/build.sh
+
       - name: 编译内核
+        if: ${{ !inputs.diag_only }}
         run: sh scripts/build.sh
 
       - name: 打包 AnyKernel3 卡刷包
+        if: ${{ !inputs.diag_only }}
         run: |
           set -e
 
@@ -148,6 +158,7 @@ jobs:
           ls -lh ./*anykernel3.zip
 
       - name: 收集产物
+        if: ${{ !inputs.diag_only }}
         run: |
           set -e
           mkdir -p dist
@@ -183,6 +194,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: 上传产物
+        if: ${{ !inputs.diag_only }}
         uses: actions/upload-artifact@v4
         with:
           name: cezanne-kernel-erofs
