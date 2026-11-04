@@ -49,3 +49,11 @@ CONFIG_MTK_CAM_SECURITY_SUPPORT=n
 
 # 通用 TEE 总线框架（原厂开着，但 OSS 树里没有配套 client 头）
 CONFIG_TEE=n
+
+# MTEE 多块保护内存：trusted_mem/Makefile 里
+#   ifneq (filter y, CONFIG_MTK_PROT_MEM_SUPPORT CONFIG_MTK_MTEE_MULTI_CHUNK_SUPPORT)
+#       mtee_impl-y += mtee_impl/mtee_ops.o
+# mtee_ops.c 直接调用 KREE_* 系列 API（gz_kree.h 里声明），
+# 而 GenieZone 已关掉，头文件与实现都不在，必须一并关掉。
+CONFIG_MTK_PROT_MEM_SUPPORT=n
+CONFIG_MTK_MTEE_MULTI_CHUNK_SUPPORT=n
