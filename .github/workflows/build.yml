@@ -167,6 +167,7 @@ jobs:
           [ -f out/arch/arm64/boot/Image ] && cp out/arch/arm64/boot/Image dist/ || true
           cp out/.config dist/config.txt
           cp out/System.map dist/System.map || true
+          cp out/crc-compare.txt dist/crc-compare.txt || true
           cp ./*anykernel3.zip dist/ || true
           cat out/include/config/kernel.release > dist/kernel-release.txt
           {
@@ -190,7 +191,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: out/build.log
+          path: |
+            out/build.log
+            out/crc-compare.txt
+            out/Module.symvers
           if-no-files-found: ignore
 
       - name: 上传产物
@@ -201,3 +205,18 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 30
+
+      - name: 符号一致性门禁（CRC 与原厂 .ko 对齐）
+        if: ${{ !inputs.diag_only }}
+        run: |
+          n=$(cat out/crc-mismatch-count 2>/dev/null || echo 0)
+          echo "CRC 不一致符号数: $n"
+          if [ -s out/module-layout-crc ]; then
+            echo "module_layout CRC = $(cat out/module-layout-crc)（原厂 0x5c148880）"
+          else
+            echo "module_layout CRC 与原厂一致"
+          fi
+          if [ "$n" != "0" ]; then
+            echo "::error::有 $n 个符号 CRC 与原厂不一致，原厂 vendor .ko 会拒载"
+            exit 1
+          fi
