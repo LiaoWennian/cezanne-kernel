@@ -138,6 +138,10 @@ jobs:
             echo "内核 release: $(cat dist/kernel-release.txt)"
             echo "EROFS: $ENABLE_EROFS   KernelSU: $ENABLE_KSU"
             echo "EROFS 生效: $(grep -c '^CONFIG_EROFS_FS=y' dist/config.txt)"
+            echo "MODVERSIONS: $(grep -c '^CONFIG_MODVERSIONS=y' dist/config.txt)"
+            echo -n "module_layout CRC: "
+            grep -m1 'module_layout' out/Module.symvers || echo "缺失（异常，模块会加载失败）"
+            echo "导出符号总数: $(wc -l < out/Module.symvers)"
           } > dist/BUILD-INFO.txt
           ls -lh dist
 
