@@ -115,7 +115,7 @@ apply_config() {
 
 	cfg="$OUT/.config"
 	# vermagic.fragment 必须最先应用，保证 MODVERSIONS 等基础开关就位
-	FRAGMENTS="$HERE/configs/vermagic.fragment $HERE/configs/erofs.fragment"
+	FRAGMENTS="$HERE/configs/vermagic.fragment $HERE/configs/descope.fragment $HERE/configs/erofs.fragment"
 	[ "$ENABLE_KSU" = "1" ] && FRAGMENTS="$FRAGMENTS $HERE/configs/ksu.fragment"
 
 	for frag in $FRAGMENTS; do
@@ -274,8 +274,21 @@ verify_symbols() {
 # 4. 编译
 # ---------------------------------------------------------------------------
 build() {
-	log "开始编译（并行 $JOBS）"
-	make -C "$KERNEL_DIR" $MAKE_VARS -j"$JOBS" Image.gz
+	log "开始编译（并行 $JOBS，-k：一次暴露全部错误）"
+	blog="$OUT/build.log"
+	# 用 -k 而不是快速失败：原厂 config 会打开一些 OSS 源码树里根本
+	# 没有实现的私有驱动，逐个试错每轮 15 分钟太贵，一轮把错全抖出来。
+	if ! make -C "$KERNEL_DIR" $MAKE_VARS -k -j"$JOBS" Image.gz > "$blog" 2>&1; then
+		echo "---------- 去重后的编译错误 ----------"
+		grep -E "fatal error:|error:" "$blog" \
+			| grep -v "LLVM ERROR" \
+			| sed -e 's#^.*/kernel/##' \
+			| sort -u | head -60
+		echo "-------------------------------------"
+		echo "---------- 末尾上下文 ----------"
+		tail -25 "$blog"
+		die "编译失败（完整日志: $blog）"
+	fi
 	[ -f "$OUT/arch/arm64/boot/Image.gz" ] || die "编译结束但找不到 Image.gz"
 
 	log "构建 Image.gz-dtb（追加 mt6889 dtb）"
