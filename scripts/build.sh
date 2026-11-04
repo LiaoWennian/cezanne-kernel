@@ -221,7 +221,7 @@ report_config_drift() {
 					if (k in critical) {
 						critbad++
 						printf "  关键项差异: %-32s 原厂=%-12s 本次=%s\n", k, b, cur
-					} else if (total <= 25) {
+					} else if (total <= 300) {
 						printf "  差异: %-32s 原厂=%-12s 本次=%s\n", k, b, cur
 					}
 				}
@@ -344,6 +344,13 @@ verify_vermagic() {
 integrate_kernelsu
 apply_config
 verify_config
+
+# 只诊断：生成 .config + 打印与原厂的全部差异后立即退出，不编译。
+# 用来快速迭代"哪些配置项影响了结构体布局/符号 CRC"，一次 7 分钟而不是 26 分钟。
+if [ "${DIAG_ONLY:-0}" = "1" ]; then
+	log "DIAG_ONLY：配置诊断结束"
+	exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # 2.5 预检模式：只编 fs/erofs，用 -k 把所有错误一次性抖出来
