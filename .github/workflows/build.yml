@@ -83,6 +83,9 @@ jobs:
           rm -rf kernel/.git
           du -sh kernel
 
+      - name: 修补厂端 Makefile（LTO 下的 duplicate symbol）
+        run: sh scripts/patch_vendor.sh
+
       - name: 移植 EROFS 驱动
         if: env.ENABLE_EROFS == '1'
         run: sh scripts/fetch_erofs.sh
