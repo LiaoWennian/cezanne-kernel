@@ -15,6 +15,10 @@ on:
         description: "内核版本后缀。保持默认才能让原厂 vendor .ko 直接加载"
         required: false
         default: "-perf-00252-g2f26b5917fd6"
+      relax_modversions:
+        description: "放行符号版本 CRC 校验（出厂内核与开源树结构体布局不同，必须开）"
+        type: boolean
+        default: true
       diag_only:
         description: "只做配置诊断（生成 .config 并列出与原厂差异），不编译"
         type: boolean
@@ -35,6 +39,7 @@ jobs:
       # make 变量 LOCALVERSION 和 CONFIG_LOCALVERSION 各追加一次，
       # 用同名环境变量会让版本后缀重复两遍。
       KERNEL_LOCALVERSION: ${{ inputs.localversion }}
+      RELAX_MODVERSIONS: ${{ inputs.relax_modversions && '1' || '0' }}
 
     steps:
       - name: 检出本仓库
@@ -217,6 +222,10 @@ jobs:
             echo "module_layout CRC 与原厂一致"
           fi
           if [ "$n" != "0" ]; then
-            echo "::error::有 $n 个符号 CRC 与原厂不一致，原厂 vendor .ko 会拒载"
-            exit 1
+            if [ "$RELAX_MODVERSIONS" = "1" ]; then
+              echo "::warning::有 $n 个符号 CRC 与原厂不一致，但已开启 RELAX_MODVERSIONS，内核会放行"
+            else
+              echo "::error::有 $n 个符号 CRC 与原厂不一致，原厂 vendor .ko 会拒载"
+              exit 1
+            fi
           fi
