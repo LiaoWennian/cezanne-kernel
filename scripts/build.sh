@@ -9,7 +9,7 @@
 #   KERNEL_DIR    内核源码目录        默认 ./kernel
 #   OUT           编译输出目录        默认 ./out
 #   CLANG_DIR     clang-r383902       默认 ./toolchain/clang
-#   GCC64_DIR     aarch64 GCC 4.9     默认 ./toolchain/gcc64
+#   CROSS_COMPILE 交叉工具前缀        默认 aarch64-linux-gnu-（apt 提供）
 #   KSU_DIR       KernelSU 源码目录   默认 ./KernelSU
 #   LOCALVERSION  版本后缀（含前导 -） 默认 -perf-00252-g2f26b5917fd6
 #   ENABLE_EROFS  是否已移植 erofs    默认 1
@@ -28,7 +28,9 @@ KERNEL_DIR=${KERNEL_DIR:-$HERE/kernel}
 OUT=${OUT:-$HERE/out}
 KSU_DIR=${KSU_DIR:-$HERE/KernelSU}
 CLANG_DIR=${CLANG_DIR:-$HERE/toolchain/clang}
-GCC64_DIR=${GCC64_DIR:-$HERE/toolchain/gcc64}
+# 交叉工具前缀：由 apt 的 binutils-aarch64-linux-gnu / gcc-aarch64-linux-gnu 提供。
+# 代码本身全部用 clang 编译（CC=clang），这里的前缀只用于兜底调用 as/ld/objcopy。
+CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
 LOCALVERSION=${LOCALVERSION:--perf-00252-g2f26b5917fd6}
 ENABLE_EROFS=${ENABLE_EROFS:-1}
 ENABLE_KSU=${ENABLE_KSU:-0}
@@ -42,15 +44,18 @@ OUT=$(cd "$OUT" && pwd)
 [ -f "$KERNEL_DIR/Makefile" ] || die "找不到内核源码: $KERNEL_DIR"
 [ -f "$KERNEL_DIR/arch/arm64/configs/$DEFCONFIG" ] || die "找不到 $DEFCONFIG（请确认分支为 cezanne-r-oss）"
 [ -x "$CLANG_DIR/bin/clang" ] || die "找不到 clang: $CLANG_DIR/bin/clang"
-[ -x "$GCC64_DIR/bin/aarch64-linux-android-gcc" ] || die "找不到 GCC 4.9: $GCC64_DIR"
+[ -x "$CLANG_DIR/bin/ld.lld" ] || die "找不到 ld.lld: $CLANG_DIR/bin/ld.lld（LTO/CFI 必需）"
+command -v "${CROSS_COMPILE}as" >/dev/null 2>&1 || \
+	die "找不到 ${CROSS_COMPILE}as，请先安装 binutils-aarch64-linux-gnu"
 
-export PATH="$CLANG_DIR/bin:$GCC64_DIR/bin:$PATH"
+export PATH="$CLANG_DIR/bin:$PATH"
 
-# 与官方 build.config.mtk.aarch64 保持一致：clang + lld
-MAKE_VARS="ARCH=arm64 O=$OUT CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf AR=llvm-ar STRIP=llvm-strip"
+# 与官方 build.config.mtk.aarch64 保持一致：clang + lld，binutils 全部用 llvm 版
+MAKE_VARS="ARCH=arm64 O=$OUT CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$CROSS_COMPILE LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf AR=llvm-ar STRIP=llvm-strip"
 
 log "内核版本: $(sed -n 's/^\(VERSION\|PATCHLEVEL\|SUBLEVEL\) *= *//p' "$KERNEL_DIR/Makefile" | paste -sd. -)"
 log "clang   : $("$CLANG_DIR/bin/clang" --version | head -n1)"
+log "交叉工具: $("${CROSS_COMPILE}as" --version | head -n1)"
 log "EROFS=$ENABLE_EROFS  KSU=$ENABLE_KSU  LOCALVERSION='$LOCALVERSION'  JOBS=$JOBS"
 
 # ---------------------------------------------------------------------------
