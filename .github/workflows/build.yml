@@ -95,6 +95,10 @@ jobs:
           git -C KernelSU checkout v0.9.5
           echo "commit count: $(git -C KernelSU rev-list --count HEAD)"
 
+      - name: 预检 fs/erofs 编译（失败即止，省时间）
+        if: env.ENABLE_EROFS == '1'
+        run: PRECHECK=1 sh scripts/build.sh
+
       - name: 编译内核
         run: sh scripts/build.sh
 
