@@ -42,6 +42,13 @@ ENABLE_EROFS=${ENABLE_EROFS:-1}
 ENABLE_KSU=${ENABLE_KSU:-0}
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
 DEFCONFIG=cezanne_user_defconfig
+# 原厂 MIUI14 内核里 IKCFG 提取出来的完整 .config（configs/base.config）。
+# 为什么不用 cezanne_user_defconfig：
+#   defconfig 是"偏离默认值才记录"的裁剪版，MTK/小米私有开关（TEE、MIHW、
+#   MILLET、SOCINFO、TYPEC…）全都不在里面。用 defconfig 编出来的内核
+#   vermagic 能对上，但 struct module 布局不同 → module_layout 的 CRC
+#   从原厂 0x5c148880 变成 0xd58c5782，10 个 vendor .ko 全部拒载。
+BASE_CONFIG=${BASE_CONFIG:-$HERE/configs/base.config}
 
 KERNEL_DIR=$(cd "$KERNEL_DIR" && pwd)
 mkdir -p "$OUT"
@@ -95,8 +102,16 @@ integrate_kernelsu() {
 # 2. 生成 .config：官方 defconfig + 片段覆盖
 # ---------------------------------------------------------------------------
 apply_config() {
-	log "生成 $DEFCONFIG"
-	make -C "$KERNEL_DIR" $MAKE_VARS "$DEFCONFIG" >/dev/null
+	if [ -f "$BASE_CONFIG" ]; then
+		log "使用原厂 config: $(basename "$BASE_CONFIG")（$(wc -l < "$BASE_CONFIG") 行）"
+		cp "$BASE_CONFIG" "$OUT/.config"
+		# 原厂 config 里带着 LOCALVERSION_AUTO=y 与 CONFIG_LOCALVERSION="-perf"，
+		# 这些在下面统一改写；olddefconfig 会补齐新移植 erofs 引入的依赖项。
+		make -C "$KERNEL_DIR" $MAKE_VARS olddefconfig >/dev/null
+	else
+		warn "找不到 $BASE_CONFIG，退回 $DEFCONFIG（module_layout CRC 必然对不上）"
+		make -C "$KERNEL_DIR" $MAKE_VARS "$DEFCONFIG" >/dev/null
+	fi
 
 	cfg="$OUT/.config"
 	# vermagic.fragment 必须最先应用，保证 MODVERSIONS 等基础开关就位
@@ -165,7 +180,95 @@ verify_config() {
 
 	[ -z "$missing" ] || die "以下配置未生效，请检查依赖链:$missing"
 	log "配置校验通过"
+
+	report_config_drift
 }
+
+# ---------------------------------------------------------------------------
+# 3.5 与原厂 config 逐项比对
+#     olddefconfig 会静默丢掉本源码树里不存在的符号（原厂 config 里有、
+#     OSS 树里没对应的 Kconfig 项）。丢符号本身不可怕，可怕的是丢掉的
+#     ∑ 恰好改了 struct module 布局 —— 那 module_layout 的 CRC 就变了。
+# ---------------------------------------------------------------------------
+CRITICAL_SYMS="SMP PREEMPT MODULE_UNLOAD MODVERSIONS KALLSYMS KALLSYMS_ALL \
+TRACEPOINTS EVENT_TRACING FTRACE FUNCTION_TRACER JUMP_LABEL LIVEPATCH \
+MODULE_SIG MODULE_SIG_FORCE GCC_PLUGIN_RANDSTRUCT LTO LTO_CLANG CFI CFI_CLANG \
+MODULE_UNLOAD_TAINT_TRACKING MODULE_FORCE_UNLOAD PREEMPT_COUNT STACKPROTECTOR_STRONG"
+
+report_config_drift() {
+	[ -f "$BASE_CONFIG" ] || return 0
+	cfg="$OUT/.config"
+	log "与原厂 config 比对"
+
+	awk -v crit="$CRITICAL_SYMS" '
+		BEGIN { n=split(crit, c, " "); for (i=1;i<=n;i++) critical[c[i]]=1 }
+		function val(line) { return substr(line, index(line,"=")+1) }
+		FILENAME==ARGV[1] {
+			if ($0 ~ /^# CONFIG_[A-Z0-9_]+ is not set/) { gsub(/^# CONFIG_/,"",$0); sub(/ is not set$/,"",$0); base[$1]="n"; next }
+			if ($0 ~ /^CONFIG_/) { k=$0; v=val($0); sub(/=.*/,"",k); sub(/^CONFIG_/,"",k); base[k]=v }
+			next
+		}
+		{
+			if ($0 ~ /^# CONFIG_[A-Z0-9_]+ is not set/) { gsub(/^# CONFIG_/,"",$0); sub(/ is not set$/,"",$0); now[$1]="n"; next }
+			if ($0 ~ /^CONFIG_/) { k=$0; v=val($0); sub(/=.*/,"",k); sub(/^CONFIG_/,"",k); now[k]=v }
+		}
+		END {
+			total=0; bad=0; critbad=0
+			for (k in base) {
+				b=base[k]; c=(k in now) ? now[k] : "缺失"
+				if (b != c) {
+					total++
+					if (k in critical) {
+						critbad++
+						printf "  关键项差异: %-32s 原厂=%-12s 本次=%s\n", k, b, c
+					} else if (total <= 25) {
+						printf "  差异: %-32s 原厂=%-12s 本次=%s\n", k, b, c
+					}
+				}
+			}
+			printf "配置差异总数: %d，其中关键项: %d\n", total, critbad
+			exit (critbad>0)
+		}
+	' "$BASE_CONFIG" "$cfg" || die "关键配置漂移，module_layout CRC 会变，先修这个再编"
+}
+
+# ---------------------------------------------------------------------------
+# 5.5 符号 CRC 硬校验：把编出来的 Module.symvers 和原厂 10 个 .ko 的
+#     __versions 表逐项比对。只要有一个同名符号 CRC 不同，模块就会
+#     加载失败（"disagrees about version of symbol X"），此时不该出包。
+# ---------------------------------------------------------------------------
+verify_symbols() {
+	symvers="$OUT/Module.symvers"
+	ref="$HERE/configs/vendor_versions.txt"
+	[ -f "$symvers" ] || { warn "找不到 Module.symvers，跳过 CRC 校验"; return 0; }
+	[ -f "$ref" ] || { warn "找不到 $ref，跳过 CRC 校验"; return 0; }
+
+	log "校验符号 CRC（对照原厂 vendor .ko）"
+	awk -F'\t' '
+		NR==FNR { want[$2]=$1; next }
+		{ crc=$1; nm=$2
+		  if (nm in want) {
+			  seen++
+			  if (want[nm]==crc) ok++
+			  else { bad++; if (bad<=15) printf "  CRC 不一致: %-38s 原厂=%s 本次=%s\n", nm, want[nm], crc }
+		  }
+		}
+		END {
+			printf "可比对符号: %d，一致: %d，不一致: %d\n", seen, ok, bad+0
+			exit (bad>0)
+		}
+	' "$ref" "$symvers" || die "符号 CRC 与原厂不一致，原厂 vendor .ko 会拒载"
+
+	# module_layout 单独强调：它是所有 .ko 都会引用的第一道门槛
+	ml=$(awk -F'\t' '$2=="module_layout" {print $1; exit}' "$symvers")
+	if [ "$ml" = "0x5c148880" ]; then
+		log "✅ module_layout CRC = 0x5c148880（与原厂一致）"
+	else
+		warn "module_layout CRC = ${ml:-缺失}，原厂为 0x5c148880"
+		die "module_layout CRC 不一致，vendor .ko 会全部加载失败"
+	fi
+}
+
 
 # ---------------------------------------------------------------------------
 # 4. 编译
@@ -184,6 +287,7 @@ build() {
 
 	log "内核 release: $(cat "$OUT/include/config/kernel.release" 2>/dev/null || echo unknown)"
 	verify_vermagic
+	verify_symbols
 }
 
 # ---------------------------------------------------------------------------
