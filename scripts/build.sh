@@ -201,7 +201,7 @@ report_config_drift() {
 	log "与原厂 config 比对"
 
 	awk -v crit="$CRITICAL_SYMS" '
-		BEGIN { n=split(crit, c, " "); for (i=1;i<=n;i++) critical[c[i]]=1 }
+		BEGIN { n=split(crit, critarr, " "); for (i=1;i<=n;i++) critical[critarr[i]]=1 }
 		function val(line) { return substr(line, index(line,"=")+1) }
 		FILENAME==ARGV[1] {
 			if ($0 ~ /^# CONFIG_[A-Z0-9_]+ is not set/) { gsub(/^# CONFIG_/,"",$0); sub(/ is not set$/,"",$0); base[$1]="n"; next }
@@ -213,16 +213,16 @@ report_config_drift() {
 			if ($0 ~ /^CONFIG_/) { k=$0; v=val($0); sub(/=.*/,"",k); sub(/^CONFIG_/,"",k); now[k]=v }
 		}
 		END {
-			total=0; bad=0; critbad=0
+			total=0; critbad=0
 			for (k in base) {
-				b=base[k]; c=(k in now) ? now[k] : "缺失"
-				if (b != c) {
+				b=base[k]; cur=(k in now) ? now[k] : "缺失"
+				if (b != cur) {
 					total++
 					if (k in critical) {
 						critbad++
-						printf "  关键项差异: %-32s 原厂=%-12s 本次=%s\n", k, b, c
+						printf "  关键项差异: %-32s 原厂=%-12s 本次=%s\n", k, b, cur
 					} else if (total <= 25) {
-						printf "  差异: %-32s 原厂=%-12s 本次=%s\n", k, b, c
+						printf "  差异: %-32s 原厂=%-12s 本次=%s\n", k, b, cur
 					}
 				}
 			}
