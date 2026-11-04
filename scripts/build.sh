@@ -88,7 +88,8 @@ apply_config() {
 	make -C "$KERNEL_DIR" $MAKE_VARS "$DEFCONFIG" >/dev/null
 
 	cfg="$OUT/.config"
-	FRAGMENTS="$HERE/configs/erofs.fragment"
+	# vermagic.fragment 必须最先应用，保证 MODVERSIONS 等基础开关就位
+	FRAGMENTS="$HERE/configs/vermagic.fragment $HERE/configs/erofs.fragment"
 	[ "$ENABLE_KSU" = "1" ] && FRAGMENTS="$FRAGMENTS $HERE/configs/ksu.fragment"
 
 	for frag in $FRAGMENTS; do
@@ -109,8 +110,13 @@ apply_config() {
 	done
 
 	# 关掉 LOCALVERSION_AUTO：否则会拼上 -g<sha>，原厂 .ko 的 vermagic 就对不上
-	"$KERNEL_DIR/scripts/config" --file "$cfg" -d LOCALVERSION_AUTO
-	"$KERNEL_DIR/scripts/config" --file "$cfg" --set-str LOCALVERSION "$LOCALVERSION"
+	# 用 sed 直接改 .config：LOCALVERSION 的值以 '-' 开头，
+	# 走 scripts/config --set-str 会被当成命令行选项解析，导致写入错误。
+	sed -i.bak -e 's/^CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/' "$cfg"
+	sed -i -e '/^CONFIG_LOCALVERSION=/d' "$cfg"
+	printf 'CONFIG_LOCALVERSION="%s"\n' "$LOCALVERSION" >> "$cfg"
+	grep -q '^# CONFIG_LOCALVERSION_AUTO is not set' "$cfg" || echo 'CONFIG_LOCALVERSION_AUTO=n' >> "$cfg"
+	rm -f "$cfg.bak"
 
 	make -C "$KERNEL_DIR" $MAKE_VARS olddefconfig >/dev/null
 }
@@ -135,6 +141,16 @@ verify_config() {
 	fi
 	check_y MODVERSIONS
 	check_not_set LOCALVERSION_AUTO
+	# vermagic 对齐：这四项决定模块能否被原厂 .ko 接受
+	check_y SMP
+	check_y PREEMPT
+	check_y MODULE_UNLOAD
+
+	# 软检查：符号不存在时（部分树没有 randstruct）不当作失败
+	grep -qx '# CONFIG_MODULE_FORCE_UNLOAD is not set' "$cfg" || \
+		warn "CONFIG_MODULE_FORCE_UNLOAD 未显式关闭，vermagic 可能多出 force_unload"
+	grep -qx '# CONFIG_GCC_PLUGIN_RANDSTRUCT is not set' "$cfg" || \
+		warn "CONFIG_GCC_PLUGIN_RANDSTRUCT 状态未知（若为 y 会导致 vermagic 不一致）"
 
 	[ -z "$missing" ] || die "以下配置未生效，请检查依赖链:$missing"
 	log "配置校验通过"
@@ -156,6 +172,33 @@ build() {
 	fi
 
 	log "内核 release: $(cat "$OUT/include/config/kernel.release" 2>/dev/null || echo unknown)"
+	verify_vermagic
+}
+
+# ---------------------------------------------------------------------------
+# 5. 终极校验：直接从编出来的 Image 里找 vermagic 字符串
+#    内核里 vermagic 是 kernel/module.c 的一个常量，一定以明文躺在 Image 里。
+#    对不上 = 原厂 .ko 全部拒载，此时不如直接失败，别浪费刷机时间。
+# ---------------------------------------------------------------------------
+verify_vermagic() {
+	img="$OUT/arch/arm64/boot/Image"
+	[ -f "$img" ] || { warn "找不到 $img，跳过 vermagic 校验"; return 0; }
+
+	rel=$(cat "$OUT/include/config/kernel.release" 2>/dev/null || echo "")
+	[ -n "$rel" ] || { warn "读不到 kernel.release，跳过"; return 0; }
+
+	expect="$rel SMP preempt mod_unload modversions aarch64"
+	log "校验 vermagic: $expect"
+
+	if grep -aqF "$expect" "$img"; then
+		log "✅ vermagic 与预期完全一致"
+	else
+		echo "----- 实际找到的 vermagic 候选 -----"
+		grep -ao "[0-9]\+\.[0-9]\+\.[0-9]\+[^\"']\{0,60\} SMP [a-z_ ]\{0,60\}" "$img" \
+			| sort -u | head -5 || true
+		echo "-----------------------------------"
+		die "vermagic 不匹配，原厂 vendor .ko 会加载失败；请检查 LOCALVERSION / MODVERSIONS / PREEMPT"
+	fi
 }
 
 integrate_kernelsu
