@@ -1,0 +1,31 @@
+# ============================================================
+# vermagic 对齐片段 —— 必须与原厂内核逐字节一致
+#
+# 原厂 vendor 里 10 个 .ko 的 vermagic 实测为：
+#   4.14.186-perf-00252-g2f26b5917fd6 SMP preempt mod_unload modversions aarch64
+#
+# 逐项对应关系：
+#   SMP            <- CONFIG_SMP=y           （ARM64 默认 y）
+#   preempt        <- CONFIG_PREEMPT=y       （defconfig 已开）
+#   mod_unload     <- CONFIG_MODULE_UNLOAD=y （默认 y）
+#   modversions    <- CONFIG_MODVERSIONS=y   ★ Kconfig 默认 n，必须显式打开
+#   aarch64        <- MODULE_ARCH_VERMAGIC   （架构自带）
+#
+# 关于 MODVERSIONS：
+#   官方 released defconfig 里没写这一项（savedefconfig 只记录偏离默认的值），
+#   但原厂模块 vermagic 明确带 modversions，说明小米构建时是打开的。
+#   不补这一项 → 内核 vermagic 少一个 token → 原厂 .ko 全部拒绝加载。
+#
+# 关于 MODULE_FORCE_UNLOAD / RANDSTRUCT：
+#   这两个若为 y 会往 vermagic 里追加 force_unload / RANDSTRUCT_PLUGIN，
+#   导致与原厂不一致，因此显式关掉。
+# ============================================================
+
+CONFIG_MODULES=y
+CONFIG_MODULE_UNLOAD=y
+CONFIG_MODVERSIONS=y
+CONFIG_SMP=y
+CONFIG_PREEMPT=y
+
+CONFIG_MODULE_FORCE_UNLOAD=n
+CONFIG_GCC_PLUGIN_RANDSTRUCT=n
