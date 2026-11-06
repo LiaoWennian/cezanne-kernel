@@ -68,6 +68,45 @@ PATCHES = [
         "\tmtk_mbox_clr_irq(mbdev, mbox, irq_temp | irq_status);",
         "SCP mbox 未注册 pin 触发中断风暴 → 清除全部状态位",
     ),
+    (
+        # 保底：万一 SCP 侧一直重发那条消息（AP 没读走 → 消息位立刻重新
+        # 置位），光"清状态"就不够了，还得把这根中断线屏蔽掉。
+        # 另外原版 "pin table err" 分支会把 recv 表里每个 pin 都 dump 一遍
+        # （约 28×2 行），一秒能刷几十万行，把 CPU 彻底拖死 —— 改成限速。
+        "drivers/soc/mediatek/mtk-mbox.c",
+        "if (irq_temp == 0 && irq_status != 0) {\n"
+        "\t\tpr_err(\"[MBOX ISR]dev=%s pin table err, status=%x\",\n"
+        "\t\t\tmbdev->name, irq_status);\n"
+        "\t\tfor (i = 0; i < mbdev->recv_count; i++) {\n"
+        "\t\t\tpin_recv = &(mbdev->pin_recv_table[i]);\n"
+        "\t\t\tmtk_mbox_dump_recv_pin(mbdev, pin_recv);\n"
+        "\t\t}\n"
+        "\t}",
+        "if (irq_temp == 0 && irq_status != 0) {\n"
+        "\t\t/* cezanne-port: 固件在用 pin 表里没注册的信号位。\n"
+        "\t\t * 1) 日志限速，避免几十万行刷屏拖死 CPU；\n"
+        "\t\t * 2) 累计超过阈值直接屏蔽该中断线，保证系统能开机。\n"
+        "\t\t */\n"
+        "\t\tpr_err_ratelimited(\"[MBOX ISR]dev=%s pin table err, status=%x\\n\",\n"
+        "\t\t\tmbdev->name, irq_status);\n"
+        "\t\tif (atomic_inc_return(&mbox_unhandled) > 1000) {\n"
+        "\t\t\tpr_err(\"[MBOX ISR]dev=%s unhandled pin storm, masking irq %d\\n\",\n"
+        "\t\t\t\tmbdev->name, irq);\n"
+        "\t\t\tdisable_irq_nosync(irq);\n"
+        "\t\t\tatomic_set(&mbox_unhandled, 0);\n"
+        "\t\t}\n"
+        "\t}",
+        "未注册 pin 持续触发时限速日志并屏蔽 IRQ（保底可开机）",
+    ),
+    (
+        "drivers/soc/mediatek/mtk-mbox.c",
+        "#include <mt-plat/mtk-mbox.h>",
+        "#include <mt-plat/mtk-mbox.h>\n"
+        "#include <linux/atomic.h>\n"
+        "\n"
+        "static atomic_t mbox_unhandled = ATOMIC_INIT(0);",
+        "补 atomic 头与未注册 pin 计数器",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
