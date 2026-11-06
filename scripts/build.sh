@@ -115,7 +115,7 @@ apply_config() {
 
 	cfg="$OUT/.config"
 	# vermagic.fragment 必须最先应用，保证 MODVERSIONS 等基础开关就位
-	FRAGMENTS="$HERE/configs/vermagic.fragment $HERE/configs/nolto.fragment $HERE/configs/descope.fragment $HERE/configs/erofs.fragment"
+	FRAGMENTS="$HERE/configs/vermagic.fragment $HERE/configs/descope.fragment $HERE/configs/erofs.fragment"
 	[ "$ENABLE_KSU" = "1" ] && FRAGMENTS="$FRAGMENTS $HERE/configs/ksu.fragment"
 
 	for frag in $FRAGMENTS; do
@@ -190,13 +190,12 @@ verify_config() {
 #     OSS 树里没对应的 Kconfig 项）。丢符号本身不可怕，可怕的是丢掉的
 #     ∑ 恰好改了 struct module 布局 —— 那 module_layout 的 CRC 就变了。
 # ---------------------------------------------------------------------------
-# 注意：LTO / LTO_CLANG / THINLTO / CFI / CFI_CLANG 已从关键项移除。
-# 这五项由 configs/nolto.fragment 主动关闭（原厂 MTK 4.14 内核不用 CFI，
-# 且 CFI 会给 struct module 增字段、改变 module_layout CRC）。
-# 关闭后它们必然与原厂 config 不同，但这是预期行为，不该中止构建。
+# 注意：LTO / LTO_CLANG / CFI / CFI_CLANG 必须与原厂一致地保持开启。
+# 实测原厂 10 个 vendor .ko 全部带 .rela.text.__cfi_check 段并引用
+# __cfi_slowpath（CRC 0x5356009c），关掉 CFI 会让 .ko 因缺符号直接加载失败。
 CRITICAL_SYMS="SMP PREEMPT MODULE_UNLOAD MODVERSIONS KALLSYMS KALLSYMS_ALL \
 TRACEPOINTS EVENT_TRACING FTRACE FUNCTION_TRACER JUMP_LABEL LIVEPATCH \
-MODULE_SIG MODULE_SIG_FORCE GCC_PLUGIN_RANDSTRUCT \
+MODULE_SIG MODULE_SIG_FORCE GCC_PLUGIN_RANDSTRUCT LTO LTO_CLANG CFI CFI_CLANG \
 MODULE_UNLOAD_TAINT_TRACKING MODULE_FORCE_UNLOAD PREEMPT_COUNT STACKPROTECTOR_STRONG"
 
 report_config_drift() {
