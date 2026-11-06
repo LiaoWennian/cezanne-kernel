@@ -1,0 +1,38 @@
+# ============================================================
+# 工具链开关对齐片段 —— 关掉 LTO / CFI
+#
+# 背景（2026-11-06 实测结论）：
+#   用当前配置编出的 Image，刷入后卡在 Redmi 第一屏，USB 完全不枚举，
+#   pstore 里连 console-ramoops 都没有 —— 内核死在 console 初始化之前。
+#
+#   排除过程：
+#     1. 刷完整原厂 boot.img → 正常开机，证明刷机链路/分区/dtbo/硬件全部正常
+#     2. 只替换 kernel（ramdisk、dtb、cmdline、header 全用原厂）
+#        → 依然卡米无日志，证明问题 100% 在内核镜像本身
+#     3. System.map 里查到 33032 个 cfi_jt 符号 + __cfi_check/__cfi_slowpath
+#        + 函数级桩 __cfi_xxx$<hash>，确认 CFI/LTO 是真正生效的
+#
+#   原厂 MTK 4.14 内核（2019 年代码）不使用 CFI —— CFI 要到 5.x 才成熟。
+#   base.config 是从 IKCFG 提取的，与实际编译条件并非完全一致。
+#
+# 为什么必须先解决这个：
+#   CONFIG_CFI_CLANG=y 会让 struct module 多出 cfi_check / cfi_check_fn
+#   两个指针（+16 字节），直接改变 module_layout 的 CRC。
+#   实测：本次 module_layout CRC = 0x6876a8fb，原厂 .ko 要求 0x5c148880，
+#   533 个符号里只有 287 个一致 —— 一致性差就是这么来的。
+#   关掉之后如果 CRC 能对上 0x5c148880，就同时解决了开机和老 .ko 布局问题。
+#
+# 影响评估：
+#   LTO       —— 只影响优化与链接方式，不影响任何 ABI / 结构体布局
+#   CFI       —— 去掉 struct module 的 cfi 字段，让布局回到"无 CFI 时代"
+#                 这与原厂 .ko 的期望一致（原厂 CRC 就是无 CFI 的布局）
+#   两者都不进入 vermagic，因此不影响 modversions 的 token 序列
+# ============================================================
+
+CONFIG_LTO_CLANG=n
+CONFIG_LTO=n
+CONFIG_THINLTO=n
+
+CONFIG_CFI_CLANG=n
+CONFIG_CFI_CLANG_SHADOW=n
+CONFIG_CFI=n
