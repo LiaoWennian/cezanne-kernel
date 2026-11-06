@@ -50,6 +50,24 @@ PATCHES = [
         "ifeq ($(CONFIG_MTK_GZ_KREE_OSS_DISABLED),y)\nobj-y += mtee_impl.o",
         "跳过 trusted_mem/mtee_impl（依赖闭源 MTEE 的 KREE_* 头文件）",
     ),
+    (
+        # SCP 邮箱中断风暴修复（实测：上机后 4.7s 起 CPU4 被打死）。
+        # 设备固件通过 mbox 发 pin 信号（status=0x1000），但开源驱动的
+        # pin 表没有注册该 pin → irq_temp=0 → 原版只清 irq_temp，
+        # 状态永远清不掉，IRQ 线保持有效 → 每秒数十万次中断风暴，
+        # 系统永远进不了 init，卡死在第一屏（console-ramoops 实锤）。
+        # 出厂内部版驱动显然处理了这种情况；这里多清 irq_status 的
+        # 多余位，未注册 pin 的消息丢弃但系统继续跑。
+        "drivers/soc/mediatek/mtk-mbox.c",
+        "\t/*clear irq status*/\n"
+        "\tspin_lock_irqsave(&minfo->mbox_lock, flags);\n"
+        "\tmtk_mbox_clr_irq(mbdev, mbox, irq_temp);",
+        "\t/*clear irq status*/\n"
+        "\tspin_lock_irqsave(&minfo->mbox_lock, flags);\n"
+        "\t/* cezanne-port: 连未注册 pin 的残留状态一起清，防止中断风暴 */\n"
+        "\tmtk_mbox_clr_irq(mbdev, mbox, irq_temp | irq_status);",
+        "SCP mbox 未注册 pin 触发中断风暴 → 清除全部状态位",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
