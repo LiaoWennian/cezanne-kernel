@@ -51,28 +51,13 @@ PATCHES = [
         "跳过 trusted_mem/mtee_impl（依赖闭源 MTEE 的 KREE_* 头文件）",
     ),
     (
-        # SCP 邮箱中断风暴修复（实测：上机后 4.7s 起 CPU4 被打死）。
-        # 设备固件通过 mbox 发 pin 信号（status=0x1000），但开源驱动的
-        # pin 表没有注册该 pin → irq_temp=0 → 原版只清 irq_temp，
-        # 状态永远清不掉，IRQ 线保持有效 → 每秒数十万次中断风暴，
-        # 系统永远进不了 init，卡死在第一屏（console-ramoops 实锤）。
-        # 出厂内部版驱动显然处理了这种情况；这里多清 irq_status 的
-        # 多余位，未注册 pin 的消息丢弃但系统继续跑。
-        "drivers/soc/mediatek/mtk-mbox.c",
-        "\t/*clear irq status*/\n"
-        "\tspin_lock_irqsave(&minfo->mbox_lock, flags);\n"
-        "\tmtk_mbox_clr_irq(mbdev, mbox, irq_temp);",
-        "\t/*clear irq status*/\n"
-        "\tspin_lock_irqsave(&minfo->mbox_lock, flags);\n"
-        "\t/* cezanne-port: 连未注册 pin 的残留状态一起清，防止中断风暴 */\n"
-        "\tmtk_mbox_clr_irq(mbdev, mbox, irq_temp | irq_status);",
-        "SCP mbox 未注册 pin 触发中断风暴 → 清除全部状态位",
-    ),
-    (
-        # 保底：万一 SCP 侧一直重发那条消息（AP 没读走 → 消息位立刻重新
-        # 置位），光"清状态"就不够了，还得把这根中断线屏蔽掉。
-        # 另外原版 "pin table err" 分支会把 recv 表里每个 pin 都 dump 一遍
-        # （约 28×2 行），一秒能刷几十万行，把 CPU 彻底拖死 —— 改成限速。
+        # 保底：SCP 固件会持续重发 pin 表里没注册的消息（AP 读不走 →
+        # 消息位立刻重新置位）。这里不改清除逻辑（改了会破坏 SCP 通信，
+        # 实测会导致 UART 时钟不就绪、printk 挂死、完全无日志），
+        # 只做两件事：
+        #   1) 原版 "pin table err" 分支会把 recv 表里每个 pin 都 dump 一遍
+        #      （约 28×2 行），一秒几十万行把 CPU4 拖死 —— 改成限速；
+        #   2) 累计超过阈值直接屏蔽该中断线，保证系统能开到用户空间。
         "drivers/soc/mediatek/mtk-mbox.c",
         "if (irq_temp == 0 && irq_status != 0) {\n"
         "\t\tpr_err(\"[MBOX ISR]dev=%s pin table err, status=%x\",\n"
